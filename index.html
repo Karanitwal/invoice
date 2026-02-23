@@ -1,0 +1,1002 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import { 
+  LayoutDashboard, Users, UserSquare, FileText, Settings, 
+  LogOut, Plus, Edit, Trash2, Search, Download, CheckCircle, 
+  X, AlertCircle, FilePlus2, DollarSign, Clock, Building
+} from 'lucide-react';
+
+// --- MOCK DATABASE / INITIAL STATE (US FORMAT) ---
+const MOCK_COMPANY = {
+  name: "Sira IT Staffing",
+  address: "123 Technology Corridor, Suite 400\nAustin, TX 78701\nUnited States",
+  email: "billing@sirastaffing.com",
+  phone: "(555) 123-4567",
+  ein: "XX-XXXXXXX"
+};
+
+const MOCK_CLIENTS = [
+  { id: 'c1', companyName: 'Acme Corp', contactPerson: 'Alice Johnson', email: 'alice@acme.com', phone: '(555) 010-1010', billingAddress: '456 Corporate Dr\nNew York, NY 10001', terms: 30 },
+  { id: 'c2', companyName: 'Global Tech', contactPerson: 'Bob Smith', email: 'bob@globaltech.com', phone: '(555) 020-2020', billingAddress: '789 Innovation Pkwy\nSan Francisco, CA 94105', terms: 15 },
+];
+
+const MOCK_CONSULTANTS = [
+  { id: 'con1', name: 'John Developer', clientId: 'c1', billRate: 85, payRate: 65, startDate: '2025-01-01', endDate: '2025-12-31' },
+  { id: 'con2', name: 'Sarah Engineer', clientId: 'c2', billRate: 95, payRate: 75, startDate: '2025-02-15', endDate: '2025-08-15' },
+];
+
+const MOCK_INVOICES = [
+  {
+    id: 'inv1', invoiceNumber: 'INV-0001', clientId: 'c1', consultantId: 'con1',
+    periodStart: '2025-01-01', periodEnd: '2025-01-31', dueDate: '2025-03-02',
+    status: 'Paid', subtotal: 13600, tax: 0, discount: 0, total: 13600,
+    items: [{ id: 'i1', description: 'Software Development Services', hours: 160, rate: 85, amount: 13600 }],
+    notes: 'Please remit payment via ACH:\nBank: Chase Bank\nRouting: 122000248\nAccount: 123456789\nName: Sira IT Staffing'
+  },
+  {
+    id: 'inv2', invoiceNumber: 'INV-0002', clientId: 'c2', consultantId: 'con2',
+    periodStart: '2025-02-01', periodEnd: '2025-02-28', dueDate: '2025-03-15',
+    status: 'Sent', subtotal: 15200, tax: 0, discount: 0, total: 15200,
+    items: [{ id: 'i2', description: 'Cloud Architecture Consulting', hours: 160, rate: 95, amount: 15200 }],
+    notes: 'Please remit payment via ACH:\nBank: Chase Bank\nRouting: 122000248\nAccount: 123456789\nName: Sira IT Staffing'
+  }
+];
+
+// --- UTILITIES ---
+const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+const generateId = () => Math.random().toString(36).substring(2, 9);
+const calculateDueDate = (dateStr, terms) => {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  date.setDate(date.getDate() + parseInt(terms));
+  return date.toISOString().split('T')[0];
+};
+const formatDateUS = (dateString) => {
+  if (!dateString) return '';
+  const [year, month, day] = dateString.split('-');
+  return `${month}/${day}/${year}`;
+};
+
+// --- MAIN APP COMPONENT ---
+export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentView, setCurrentView] = useState('dashboard');
+  const [viewParams, setViewParams] = useState(null);
+
+  const [company, setCompany] = useState(MOCK_COMPANY);
+  const [clients, setClients] = useState(MOCK_CLIENTS);
+  const [consultants, setConsultants] = useState(MOCK_CONSULTANTS);
+  const [invoices, setInvoices] = useState(MOCK_INVOICES);
+
+  if (!isAuthenticated) {
+    return <LoginScreen onLogin={() => setIsAuthenticated(true)} />;
+  }
+
+  const renderView = () => {
+    switch (currentView) {
+      case 'dashboard':
+        return <Dashboard invoices={invoices} clients={clients} />;
+      case 'clients':
+        return <ClientsView clients={clients} setClients={setClients} />;
+      case 'consultants':
+        return <ConsultantsView consultants={consultants} setConsultants={setConsultants} clients={clients} />;
+      case 'invoices':
+        return <InvoicesView invoices={invoices} clients={clients} setInvoices={setInvoices} onNavigate={(view, params) => { setCurrentView(view); setViewParams(params); }} />;
+      case 'invoice_create':
+      case 'invoice_edit':
+        return <InvoiceBuilder 
+                  clients={clients} 
+                  consultants={consultants} 
+                  invoices={invoices} 
+                  company={company}
+                  setInvoices={setInvoices} 
+                  onClose={() => setCurrentView('invoices')}
+                  editId={currentView === 'invoice_edit' ? viewParams?.id : null}
+                />;
+      case 'invoice_detail':
+        return <InvoiceDetail 
+                  invoiceId={viewParams?.id} 
+                  invoices={invoices} 
+                  clients={clients} 
+                  consultants={consultants}
+                  company={company}
+                  onClose={() => setCurrentView('invoices')}
+                />;
+      case 'settings':
+        return <SettingsView company={company} setCompany={setCompany} />;
+      default:
+        return <Dashboard invoices={invoices} clients={clients} />;
+    }
+  };
+
+  return (
+    <div className="flex h-screen bg-gray-50 text-gray-900 font-sans">
+      {/* Sidebar Navigation */}
+      <aside className="w-64 bg-gray-900 text-white flex flex-col print:hidden shadow-xl z-10">
+        <div className="p-6 flex items-center gap-3">
+          <div className="bg-blue-600 p-2 rounded-lg shadow-lg"><Building size={20} /></div>
+          <span className="text-xl font-bold tracking-tight">Sira Invoice</span>
+        </div>
+        
+        <nav className="flex-1 px-4 space-y-1.5 mt-4">
+          <NavItem icon={<LayoutDashboard size={18} />} label="Dashboard" active={currentView === 'dashboard'} onClick={() => setCurrentView('dashboard')} />
+          <NavItem icon={<Users size={18} />} label="Clients" active={currentView === 'clients'} onClick={() => setCurrentView('clients')} />
+          <NavItem icon={<UserSquare size={18} />} label="Consultants" active={currentView === 'consultants'} onClick={() => setCurrentView('consultants')} />
+          <NavItem icon={<FileText size={18} />} label="Invoices" active={currentView.startsWith('invoice')} onClick={() => setCurrentView('invoices')} />
+          <NavItem icon={<Settings size={18} />} label="Settings" active={currentView === 'settings'} onClick={() => setCurrentView('settings')} />
+        </nav>
+
+        <div className="p-4 border-t border-gray-800">
+          <button onClick={() => setIsAuthenticated(false)} className="flex items-center gap-3 text-gray-400 hover:text-white w-full px-2 py-2 transition-colors">
+            <LogOut size={18} />
+            <span className="text-sm font-medium">Log out</span>
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <main className="flex-1 flex flex-col overflow-hidden bg-gray-50 print:bg-white print:overflow-visible">
+        <header className="print:hidden h-16 bg-white border-b border-gray-200 flex items-center px-8 justify-between shrink-0 shadow-sm z-0">
+          <h1 className="text-xl font-semibold capitalize text-gray-800">
+            {currentView.replace('_', ' ')}
+          </h1>
+          <div className="flex items-center gap-4">
+            <div className="w-9 h-9 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold shadow-inner">
+              AD
+            </div>
+          </div>
+        </header>
+        <div className="flex-1 overflow-y-auto p-8 print:p-0 print:overflow-visible">
+          {renderView()}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+// --- COMPONENTS ---
+
+const NavItem = ({ icon, label, active, onClick }) => (
+  <button 
+    onClick={onClick}
+    className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-md transition-all duration-200 ${active ? 'bg-blue-600 text-white font-medium shadow-md' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
+  >
+    {icon}
+    <span className="text-sm">{label}</span>
+  </button>
+);
+
+function LoginScreen({ onLogin }) {
+  return (
+    <div className="min-h-screen bg-gray-100 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+      <div className="sm:mx-auto sm:w-full sm:max-w-md">
+        <div className="flex justify-center text-blue-600"><Building size={56} /></div>
+        <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">Sign in to Sira</h2>
+        <p className="mt-2 text-center text-sm text-gray-600">US IT Staffing B2B Financial Platform</p>
+      </div>
+      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
+        <div className="bg-white py-8 px-10 shadow-xl rounded-xl border border-gray-100">
+          <form className="space-y-6" onSubmit={(e) => { e.preventDefault(); onLogin(); }}>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Email address</label>
+              <input type="email" required defaultValue="admin@sirastaffing.com" className="appearance-none block w-full px-3 py-2.5 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+              <input type="password" required defaultValue="password" className="appearance-none block w-full px-3 py-2.5 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm" />
+            </div>
+            <button type="submit" className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
+              Sign in to Dashboard
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Dashboard({ invoices, clients }) {
+  const stats = useMemo(() => {
+    const totalPaid = invoices.filter(i => i.status === 'Paid').reduce((sum, i) => sum + i.total, 0);
+    const totalOutstanding = invoices.filter(i => i.status === 'Sent' || i.status === 'Draft').reduce((sum, i) => sum + i.total, 0);
+    const overdue = invoices.filter(i => i.status === 'Overdue').reduce((sum, i) => sum + i.total, 0);
+    return { totalPaid, totalOutstanding, overdue };
+  }, [invoices]);
+
+  return (
+    <div className="space-y-6 max-w-6xl mx-auto">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <StatCard title="Total Paid Revenue" value={formatCurrency(stats.totalPaid)} icon={<DollarSign size={24} className="text-green-600" />} />
+        <StatCard title="Total Outstanding" value={formatCurrency(stats.totalOutstanding)} icon={<Clock size={24} className="text-blue-600" />} />
+        <StatCard title="Overdue Amount" value={formatCurrency(stats.overdue)} icon={<AlertCircle size={24} className="text-red-600" />} className="border-red-200 bg-red-50" />
+      </div>
+
+      <div className="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden">
+        <div className="px-6 py-5 border-b border-gray-200 bg-white">
+          <h3 className="text-lg font-medium leading-6 text-gray-900">Recent Invoices</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Invoice</th>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Client</th>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Amount</th>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Due Date</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {invoices.slice(0, 5).map((invoice) => {
+                const client = clients.find(c => c.id === invoice.clientId);
+                return (
+                  <tr key={invoice.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">{invoice.invoiceNumber}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{client?.companyName || 'Unknown'}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">{formatCurrency(invoice.total)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap"><StatusBadge status={invoice.status} /></td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatDateUS(invoice.dueDate)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const StatCard = ({ title, value, icon, className = "bg-white border-gray-200" }) => (
+  <div className={`p-6 rounded-xl border shadow-sm flex items-center ${className}`}>
+    <div className="p-4 bg-white rounded-full shadow-sm border border-gray-100">{icon}</div>
+    <div className="ml-5">
+      <p className="text-sm font-medium text-gray-500 truncate">{title}</p>
+      <p className="mt-1 text-2xl font-bold text-gray-900">{value}</p>
+    </div>
+  </div>
+);
+
+const StatusBadge = ({ status }) => {
+  const styles = {
+    Draft: "bg-gray-100 text-gray-800 border-gray-200",
+    Sent: "bg-blue-50 text-blue-700 border-blue-200",
+    Paid: "bg-green-50 text-green-700 border-green-200",
+    Overdue: "bg-red-50 text-red-700 border-red-200"
+  };
+  return <span className={`px-2.5 py-1 inline-flex text-xs leading-4 font-semibold rounded-full border ${styles[status]}`}>{status}</span>;
+};
+
+// --- CLIENTS VIEW ---
+function ClientsView({ clients, setClients }) {
+  const [showModal, setShowModal] = useState(false);
+  const [editingClient, setEditingClient] = useState(null);
+
+  const handleSave = (clientData) => {
+    if (editingClient) {
+      setClients(clients.map(c => c.id === editingClient.id ? { ...clientData, id: c.id } : c));
+    } else {
+      setClients([...clients, { ...clientData, id: generateId() }]);
+    }
+    setShowModal(false);
+    setEditingClient(null);
+  };
+
+  return (
+    <div className="max-w-6xl mx-auto">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-xl font-semibold text-gray-800">Client Directory</h2>
+        <button onClick={() => setShowModal(true)} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm font-medium transition-colors shadow-sm">
+          <Plus size={16} /> Add Client
+        </button>
+      </div>
+
+      <div className="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Company</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Contact Details</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Billing Address</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Terms</th>
+              <th className="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {clients.map(client => (
+              <tr key={client.id} className="hover:bg-gray-50">
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{client.companyName}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <div className="font-medium text-gray-900">{client.contactPerson}</div>
+                  <div className="text-xs">{client.email}</div>
+                  <div className="text-xs">{client.phone}</div>
+                </td>
+                <td className="px-6 py-4 whitespace-pre-line text-sm text-gray-500">{client.billingAddress}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Net {client.terms}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                  <button onClick={() => { setEditingClient(client); setShowModal(true); }} className="text-blue-600 hover:text-blue-900 font-medium">Edit</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {showModal && <ClientModal client={editingClient} onSave={handleSave} onClose={() => { setShowModal(false); setEditingClient(null); }} />}
+    </div>
+  );
+}
+
+function ClientModal({ client, onSave, onClose }) {
+  const [formData, setFormData] = useState(client || { companyName: '', contactPerson: '', email: '', phone: '', billingAddress: '', terms: 30 });
+
+  return (
+    <div className="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl p-6 w-full max-w-lg shadow-2xl">
+        <div className="flex justify-between items-center mb-5">
+          <h3 className="text-xl font-bold text-gray-900">{client ? 'Edit Client Profile' : 'Register New Client'}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={20}/></button>
+        </div>
+        <form onSubmit={(e) => { e.preventDefault(); onSave(formData); }} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Company Name</label>
+            <input required className="w-full border border-gray-300 p-2.5 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.companyName} onChange={e => setFormData({...formData, companyName: e.target.value})} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Contact Person</label>
+              <input required className="w-full border border-gray-300 p-2.5 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.contactPerson} onChange={e => setFormData({...formData, contactPerson: e.target.value})} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Payment Terms</label>
+              <select className="w-full border border-gray-300 p-2.5 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.terms} onChange={e => setFormData({...formData, terms: e.target.value})}>
+                <option value={15}>Net 15 Days</option>
+                <option value={30}>Net 30 Days</option>
+                <option value={45}>Net 45 Days</option>
+                <option value={60}>Net 60 Days</option>
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+              <input required type="email" className="w-full border border-gray-300 p-2.5 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
+              <input placeholder="(555) 000-0000" className="w-full border border-gray-300 p-2.5 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Billing Address</label>
+            <textarea rows="3" required placeholder="Street Address&#10;City, State ZIP" className="w-full border border-gray-300 p-2.5 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.billingAddress} onChange={e => setFormData({...formData, billingAddress: e.target.value})} />
+          </div>
+          <div className="flex justify-end gap-3 pt-4 mt-6 border-t border-gray-100">
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 font-medium">Cancel</button>
+            <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium shadow-sm">Save Client</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// --- CONSULTANTS VIEW ---
+function ConsultantsView({ consultants, setConsultants, clients }) {
+  const [showModal, setShowModal] = useState(false);
+
+  return (
+    <div className="max-w-6xl mx-auto">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-xl font-semibold text-gray-800">Consultant Roster</h2>
+        <button onClick={() => setShowModal(true)} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm font-medium transition-colors shadow-sm">
+          <Plus size={16} /> Add Consultant
+        </button>
+      </div>
+
+      <div className="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Consultant Name</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Assigned Client</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Bill Rate</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Contract Period</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {consultants.map(cons => {
+              const client = clients.find(c => c.id === cons.clientId);
+              return (
+                <tr key={cons.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{cons.name}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{client?.companyName}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{formatCurrency(cons.billRate)}/hr</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatDateUS(cons.startDate)} to {cons.endDate ? formatDateUS(cons.endDate) : 'Present'}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {showModal && (
+        <ConsultantModal 
+          clients={clients}
+          onSave={(data) => { setConsultants([...consultants, { ...data, id: generateId() }]); setShowModal(false); }} 
+          onClose={() => setShowModal(false)} 
+        />
+      )}
+    </div>
+  );
+}
+
+function ConsultantModal({ clients, onSave, onClose }) {
+  const [formData, setFormData] = useState({ name: '', clientId: clients[0]?.id || '', billRate: '', payRate: '', startDate: '', endDate: '' });
+
+  return (
+    <div className="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl p-6 w-full max-w-lg shadow-2xl">
+        <div className="flex justify-between items-center mb-5">
+          <h3 className="text-xl font-bold text-gray-900">Add New Consultant</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={20}/></button>
+        </div>
+        <form onSubmit={(e) => { e.preventDefault(); onSave({...formData, billRate: Number(formData.billRate), payRate: Number(formData.payRate)}); }} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+            <input required className="w-full border border-gray-300 p-2.5 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Assign to Client</label>
+            <select required className="w-full border border-gray-300 p-2.5 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.clientId} onChange={e => setFormData({...formData, clientId: e.target.value})}>
+              <option value="">-- Select Client --</option>
+              {clients.map(c => <option key={c.id} value={c.id}>{c.companyName}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Bill Rate ($/hr)</label>
+              <input required type="number" min="0" step="0.01" className="w-full border border-gray-300 p-2.5 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.billRate} onChange={e => setFormData({...formData, billRate: e.target.value})} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Pay Rate ($/hr) - Optional</label>
+              <input type="number" min="0" step="0.01" className="w-full border border-gray-300 p-2.5 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.payRate} onChange={e => setFormData({...formData, payRate: e.target.value})} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Contract Start Date</label>
+              <input required type="date" className="w-full border border-gray-300 p-2.5 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.startDate} onChange={e => setFormData({...formData, startDate: e.target.value})} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Contract End Date</label>
+              <input type="date" className="w-full border border-gray-300 p-2.5 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.endDate} onChange={e => setFormData({...formData, endDate: e.target.value})} />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-4 mt-6 border-t border-gray-100">
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 font-medium">Cancel</button>
+            <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium shadow-sm">Save Consultant</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// --- INVOICES VIEW (LIST) ---
+function InvoicesView({ invoices, clients, setInvoices, onNavigate }) {
+  const [filter, setFilter] = useState('All');
+
+  const filteredInvoices = invoices.filter(inv => filter === 'All' || inv.status === filter).sort((a,b) => new Date(b.periodStart) - new Date(a.periodStart));
+
+  const updateStatus = (id, newStatus) => {
+    setInvoices(invoices.map(inv => inv.id === id ? { ...inv, status: newStatus } : inv));
+  };
+
+  return (
+    <div className="max-w-6xl mx-auto">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-xl font-semibold text-gray-800">Invoices</h2>
+        <button onClick={() => onNavigate('invoice_create')} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm font-medium shadow-sm transition-colors">
+          <Plus size={16} /> Create Invoice
+        </button>
+      </div>
+
+      <div className="mb-6 flex gap-2">
+        {['All', 'Draft', 'Sent', 'Paid', 'Overdue'].map(f => (
+          <button 
+            key={f} 
+            onClick={() => setFilter(f)} 
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${filter === f ? 'bg-gray-800 text-white shadow-sm' : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+          >
+            {f}
+          </button>
+        ))}
+      </div>
+
+      <div className="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Invoice #</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Client</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Total</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+              <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Issue Date</th>
+              <th className="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {filteredInvoices.map(inv => (
+              <tr key={inv.id} className="hover:bg-gray-50 transition-colors">
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
+                  <button onClick={() => onNavigate('invoice_detail', { id: inv.id })} className="text-blue-600 hover:text-blue-800 hover:underline">{inv.invoiceNumber}</button>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 font-medium">{clients.find(c => c.id === inv.clientId)?.companyName}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">{formatCurrency(inv.total)}</td>
+                <td className="px-6 py-4 whitespace-nowrap"><StatusBadge status={inv.status} /></td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatDateUS(inv.periodStart)}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-4">
+                  {inv.status === 'Draft' && <button onClick={() => updateStatus(inv.id, 'Sent')} className="text-blue-600 hover:text-blue-900">Mark Sent</button>}
+                  {inv.status === 'Sent' && <button onClick={() => updateStatus(inv.id, 'Paid')} className="text-green-600 hover:text-green-900">Mark Paid</button>}
+                  <button onClick={() => onNavigate('invoice_edit', { id: inv.id })} className="text-gray-400 hover:text-gray-800" title="Edit"><Edit size={16}/></button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {filteredInvoices.length === 0 && (
+          <div className="p-8 text-center text-gray-500">No invoices found matching criteria.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// --- INVOICE BUILDER (CREATE / EDIT) ---
+function InvoiceBuilder({ clients, consultants, invoices, company, setInvoices, onClose, editId }) {
+  const existingInvoice = editId ? invoices.find(i => i.id === editId) : null;
+  
+  const [formData, setFormData] = useState(existingInvoice || {
+    clientId: '',
+    consultantId: '',
+    periodStart: new Date().toISOString().split('T')[0],
+    periodEnd: new Date().toISOString().split('T')[0],
+    dueDate: '',
+    items: [{ id: generateId(), description: '', hours: 0, rate: 0, amount: 0 }],
+    notes: `Please remit payment via ACH:\nBank: US Bank\nRouting: 122000248\nAccount: 123456789\nName: ${company.name}`,
+    tax: 0,
+    discount: 0
+  });
+
+  // Derived State Calculations
+  const subtotal = formData.items.reduce((sum, item) => sum + item.amount, 0);
+  const taxAmount = subtotal * (formData.tax / 100);
+  const total = subtotal + taxAmount - formData.discount;
+
+  useEffect(() => {
+    // Auto calculate Due Date based on selected Client's terms if creating new
+    if (formData.clientId && !existingInvoice) {
+      const client = clients.find(c => c.id === formData.clientId);
+      if (client) {
+        setFormData(prev => ({ ...prev, dueDate: calculateDueDate(prev.periodStart, client.terms) }));
+      }
+    }
+  }, [formData.clientId, formData.periodStart, clients, existingInvoice]);
+
+  const updateItem = (index, field, value) => {
+    const newItems = [...formData.items];
+    newItems[index][field] = value;
+    if (field === 'hours' || field === 'rate') {
+      newItems[index].amount = Number(newItems[index].hours) * Number(newItems[index].rate);
+    }
+    setFormData({ ...formData, items: newItems });
+  };
+
+  const addItem = () => {
+    setFormData({ ...formData, items: [...formData.items, { id: generateId(), description: '', hours: 0, rate: 0, amount: 0 }] });
+  };
+
+  const removeItem = (index) => {
+    if (formData.items.length === 1) return; // Prevent deleting last item
+    const newItems = formData.items.filter((_, i) => i !== index);
+    setFormData({ ...formData, items: newItems });
+  };
+
+  const handleSave = () => {
+    const payload = {
+      ...formData,
+      subtotal,
+      total,
+      status: existingInvoice ? existingInvoice.status : 'Draft',
+      invoiceNumber: existingInvoice ? existingInvoice.invoiceNumber : `INV-${String(invoices.length + 1).padStart(4, '0')}`
+    };
+
+    if (existingInvoice) {
+      setInvoices(invoices.map(i => i.id === editId ? payload : i));
+    } else {
+      setInvoices([{ ...payload, id: generateId() }, ...invoices]);
+    }
+    onClose();
+  };
+
+  return (
+    <div className="max-w-5xl mx-auto pb-12">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-bold text-gray-900">{existingInvoice ? 'Edit Invoice' : 'Create New Invoice'}</h2>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-800 transition-colors"><X size={24} /></button>
+      </div>
+
+      <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-8 space-y-8">
+        
+        {/* Core Details */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Select Client <span className="text-red-500">*</span></label>
+            <select required className="w-full border border-gray-300 rounded-md p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white" value={formData.clientId} onChange={e => setFormData({...formData, clientId: e.target.value})}>
+              <option value="">-- Choose Client --</option>
+              {clients.map(c => <option key={c.id} value={c.id}>{c.companyName}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Select Consultant (Optional)</label>
+            <select className="w-full border border-gray-300 rounded-md p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white" value={formData.consultantId} onChange={e => {
+              const cid = e.target.value;
+              const cons = consultants.find(c => c.id === cid);
+              setFormData({...formData, consultantId: cid});
+              // Auto-populate rate if empty and consultant is selected
+              if (cons && formData.items.length === 1 && Number(formData.items[0].rate) === 0) {
+                 updateItem(0, 'rate', cons.billRate);
+                 updateItem(0, 'description', `Consulting Services - ${cons.name}`);
+              }
+            }}>
+              <option value="">-- None --</option>
+              {consultants.filter(c => !formData.clientId || c.clientId === formData.clientId).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Invoice Date</label>
+            <input type="date" required className="w-full border border-gray-300 rounded-md p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.periodStart} onChange={e => setFormData({...formData, periodStart: e.target.value})} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Period End (Optional)</label>
+            <input type="date" className="w-full border border-gray-300 rounded-md p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.periodEnd} onChange={e => setFormData({...formData, periodEnd: e.target.value})} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Payment Due Date</label>
+            <input type="date" required className="w-full border border-gray-300 rounded-md p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.dueDate} onChange={e => setFormData({...formData, dueDate: e.target.value})} />
+          </div>
+        </div>
+
+        {/* Line Items */}
+        <div>
+          <h3 className="text-lg font-medium text-gray-900 mb-4 border-b pb-2">Line Items</h3>
+          <div className="space-y-3">
+            <div className="flex gap-4 px-2 text-xs font-bold text-gray-500 uppercase tracking-wider">
+              <div className="flex-1">Description</div>
+              <div className="w-24 text-right">Qty/Hours</div>
+              <div className="w-32 text-right">Rate ($)</div>
+              <div className="w-32 text-right">Amount</div>
+              <div className="w-10"></div>
+            </div>
+            
+            {formData.items.map((item, index) => (
+              <div key={item.id} className="flex gap-4 items-center bg-gray-50 p-2 rounded-md border border-gray-200">
+                <input placeholder="Service description..." required className="flex-1 border border-gray-300 p-2 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none" value={item.description} onChange={e => updateItem(index, 'description', e.target.value)} />
+                <input type="number" min="0" step="0.5" required className="w-24 border border-gray-300 p-2 rounded text-right focus:ring-2 focus:ring-blue-500 focus:outline-none" value={item.hours} onChange={e => updateItem(index, 'hours', e.target.value)} />
+                <input type="number" min="0" step="0.01" required className="w-32 border border-gray-300 p-2 rounded text-right focus:ring-2 focus:ring-blue-500 focus:outline-none" value={item.rate} onChange={e => updateItem(index, 'rate', e.target.value)} />
+                <div className="w-32 text-right font-medium text-gray-900 py-2">{formatCurrency(item.amount)}</div>
+                <button type="button" onClick={() => removeItem(index)} disabled={formData.items.length === 1} className="w-10 text-gray-400 hover:text-red-500 flex justify-center disabled:opacity-30"><Trash2 size={18} /></button>
+              </div>
+            ))}
+          </div>
+          
+          <button type="button" onClick={addItem} className="mt-4 flex items-center gap-2 text-blue-600 hover:text-blue-800 text-sm font-medium">
+            <Plus size={16} /> Add Line Item
+          </button>
+        </div>
+
+        {/* Totals & Notes */}
+        <div className="flex flex-col md:flex-row gap-8 justify-between border-t pt-6 border-gray-200">
+          <div className="flex-1">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Notes / Payment Instructions</label>
+            <textarea rows="5" className="w-full border border-gray-300 rounded-md p-3 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="Please send payment via ACH to..." value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})}></textarea>
+          </div>
+          
+          <div className="w-full md:w-80 space-y-3 bg-gray-50 p-6 rounded-xl border border-gray-200">
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-600 font-medium">Subtotal</span>
+              <span className="font-medium text-gray-900">{formatCurrency(subtotal)}</span>
+            </div>
+            <div className="flex justify-between items-center text-sm">
+              <span className="text-gray-600 font-medium">Tax (%)</span>
+              <input type="number" min="0" className="w-20 border border-gray-300 p-1.5 rounded text-right focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.tax} onChange={e => setFormData({...formData, tax: Number(e.target.value)})} />
+            </div>
+            <div className="flex justify-between items-center text-sm border-b pb-4 border-gray-200">
+              <span className="text-gray-600 font-medium">Discount ($)</span>
+              <input type="number" min="0" className="w-24 border border-gray-300 p-1.5 rounded text-right focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.discount} onChange={e => setFormData({...formData, discount: Number(e.target.value)})} />
+            </div>
+            <div className="flex justify-between text-xl font-bold text-gray-900 pt-2">
+              <span>Total</span>
+              <span>{formatCurrency(total)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex justify-end gap-4 pt-4 border-t border-gray-100">
+          <button type="button" onClick={onClose} className="px-6 py-2.5 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 font-medium transition-colors">Cancel</button>
+          <button type="button" onClick={handleSave} disabled={!formData.clientId} className="px-6 py-2.5 bg-blue-600 rounded-md text-white hover:bg-blue-700 font-medium disabled:opacity-50 shadow-sm transition-colors">
+            {existingInvoice ? 'Update Invoice' : 'Save Invoice'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- INVOICE DETAIL & PDF VIEW ---
+function InvoiceDetail({ invoiceId, invoices, clients, consultants, company, onClose }) {
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+  const invoice = invoices.find(i => i.id === invoiceId);
+  const client = clients.find(c => c.id === invoice?.clientId);
+  const consultant = consultants.find(c => c.id === invoice?.consultantId);
+
+  if (!invoice || !client) return <div>Invoice not found</div>;
+
+  const handleDownloadPDF = async () => {
+    setIsGeneratingPDF(true);
+    
+    const element = document.getElementById('invoice-pdf-content');
+    
+    // Fix scroll offset natively without cloning (prevents blank PDFs)
+    const originalScrollY = window.scrollY;
+    const originalScrollX = window.scrollX;
+    window.scrollTo(0, 0);
+    
+    const opt = {
+      margin:       0,
+      filename:     `${invoice.invoiceNumber}_${client.companyName.replace(/\s+/g, '_')}.pdf`,
+      image:        { type: 'jpeg', quality: 1 },
+      html2canvas:  { 
+        scale: 2, 
+        useCORS: true, 
+        width: 816, // Lock canvas width exactly to our element width
+        windowWidth: 816,
+        scrollX: 0,
+        scrollY: 0
+      },
+      jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
+    };
+
+    const generate = async () => {
+      try {
+        await window.html2pdf().set(opt).from(element).save();
+      } finally {
+        // Restore user's scroll position
+        window.scrollTo(originalScrollX, originalScrollY);
+        setIsGeneratingPDF(false);
+      }
+    };
+
+    if (window.html2pdf) {
+      await generate();
+    } else {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+      script.onload = generate;
+      document.body.appendChild(script);
+    }
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto pb-12 print:max-w-none print:pb-0">
+      
+      {/* Controls */}
+      <div className="flex justify-between items-center mb-6 print:hidden">
+        <button onClick={onClose} className="text-gray-600 hover:text-gray-900 font-medium text-sm flex items-center gap-1 transition-colors">
+          &larr; Back to Invoices
+        </button>
+        <div className="flex gap-3">
+          <button 
+            onClick={handleDownloadPDF} 
+            disabled={isGeneratingPDF}
+            className="flex items-center gap-2 bg-gray-900 text-white px-5 py-2.5 rounded-md hover:bg-gray-800 text-sm font-medium transition-colors shadow-md disabled:opacity-70"
+          >
+            <Download size={16} /> {isGeneratingPDF ? 'Generating PDF...' : 'Download PDF'}
+          </button>
+        </div>
+      </div>
+
+      {/* Visual Container */}
+      <div className="overflow-x-auto bg-gray-100 rounded-xl shadow-inner border border-gray-200 py-8">
+        
+        {/* The explicit width wrapper */}
+        <div className="mx-auto w-[816px] shadow-2xl bg-white print:shadow-none print:m-0 print:w-auto">
+          
+          {/* THE PDF TARGET */}
+          <div id="invoice-pdf-content" className="w-[816px] bg-white text-gray-900 p-12 shrink-0 box-border relative print:p-0 print:w-auto">
+            
+            {/* US Standard Header Section */}
+            <div className="flex justify-between items-start pb-8 mb-8">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 text-blue-800 mb-3">
+                  <Building size={36} />
+                  <span className="text-3xl font-bold tracking-tight">{company.name}</span>
+                </div>
+                <p className="text-sm text-gray-600 whitespace-pre-line leading-relaxed">{company.address}</p>
+                <p className="text-sm text-gray-600 mt-1">{company.phone}</p>
+                <p className="text-sm text-gray-600">{company.email}</p>
+                {company.ein && <p className="text-sm text-gray-500 mt-1">EIN: {company.ein}</p>}
+              </div>
+              <div className="text-right w-64">
+                <h1 className="text-4xl font-normal text-gray-300 tracking-widest uppercase mb-6">Invoice</h1>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm justify-end">
+                  <span className="text-gray-500 font-semibold uppercase tracking-wider text-xs flex items-center justify-end">Invoice #</span>
+                  <span className="font-medium text-right">{invoice.invoiceNumber}</span>
+                  
+                  <span className="text-gray-500 font-semibold uppercase tracking-wider text-xs flex items-center justify-end">Date</span>
+                  <span className="font-medium text-right">{formatDateUS(invoice.periodStart)}</span>
+                  
+                  <span className="text-gray-500 font-semibold uppercase tracking-wider text-xs flex items-center justify-end">Terms</span>
+                  <span className="font-medium text-right">Net {client.terms}</span>
+                  
+                  <span className="text-gray-500 font-semibold uppercase tracking-wider text-xs flex items-center justify-end">Due Date</span>
+                  <span className="font-bold text-gray-900 text-right">{formatDateUS(invoice.dueDate)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* US Standard Bill To Section - Removed inline-block to fix html2canvas bug */}
+            <div className="mb-10 w-1/2">
+              <div className="flex">
+                <div className="bg-gray-100 px-3 py-1.5 mb-3 border-l-4 border-blue-600">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-gray-700 m-0">Bill To</h3>
+                </div>
+              </div>
+              <div className="pl-1">
+                <p className="text-lg font-bold text-gray-900 m-0">{client.companyName}</p>
+                <p className="text-sm text-gray-800 font-medium mt-1 mb-0">{client.contactPerson}</p>
+                <p className="text-sm text-gray-600 whitespace-pre-line leading-relaxed mt-1 mb-0">{client.billingAddress}</p>
+              </div>
+            </div>
+            
+            {/* Consultant Reference */}
+            {consultant && (
+              <div className="mb-8 pl-3 border-l-4 border-gray-200 py-2 bg-gray-50 pr-6">
+                <p className="text-sm text-gray-700 m-0"><span className="font-bold text-gray-900 uppercase text-xs tracking-wider mr-2">Consultant:</span> {consultant.name}</p>
+                <p className="text-sm text-gray-700 mt-1 mb-0"><span className="font-bold text-gray-900 uppercase text-xs tracking-wider mr-2">Billing Period:</span> {formatDateUS(invoice.periodStart)} - {formatDateUS(invoice.periodEnd || invoice.periodStart)}</p>
+              </div>
+            )}
+
+            {/* Table Section */}
+            <div className="mb-10 border border-gray-300 rounded-sm overflow-hidden">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-gray-100 border-b border-gray-300">
+                  <tr className="text-sm">
+                    <th className="py-3 px-4 font-bold text-gray-700 uppercase tracking-wider text-xs">Description</th>
+                    <th className="py-3 px-4 font-bold text-gray-700 uppercase tracking-wider text-xs text-right">Hours/Qty</th>
+                    <th className="py-3 px-4 font-bold text-gray-700 uppercase tracking-wider text-xs text-right">Rate</th>
+                    <th className="py-3 px-4 font-bold text-gray-700 uppercase tracking-wider text-xs text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {invoice.items.map((item, idx) => (
+                    <tr key={idx} className="text-sm bg-white">
+                      <td className="py-4 px-4 text-gray-800 whitespace-pre-line">{item.description}</td>
+                      <td className="py-4 px-4 text-gray-800 text-right">{item.hours}</td>
+                      <td className="py-4 px-4 text-gray-800 text-right">{formatCurrency(item.rate)}</td>
+                      <td className="py-4 px-4 text-gray-900 font-semibold text-right">{formatCurrency(item.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Bottom Section: Notes & Totals */}
+            <div className="flex justify-between items-start gap-12 mb-6">
+              {/* Footer Notes */}
+              <div className="flex-1">
+                {invoice.notes && (
+                  <div className="text-sm text-gray-700 bg-gray-50 p-5 border border-gray-200 rounded-sm">
+                    <h4 className="text-xs font-bold text-gray-900 uppercase tracking-wider mb-2">Payment Instructions</h4>
+                    <p className="whitespace-pre-line leading-relaxed text-gray-600">{invoice.notes}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Totals Section */}
+              <div className="w-80 border border-gray-200 rounded-sm overflow-hidden flex-shrink-0">
+                <div className="p-4 space-y-3 bg-white">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600 font-medium">Subtotal</span>
+                    <span className="text-gray-900 font-medium">{formatCurrency(invoice.subtotal)}</span>
+                  </div>
+                  {invoice.tax > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-600 font-medium">Tax ({invoice.tax}%)</span>
+                      <span className="text-gray-900">{formatCurrency(invoice.subtotal * (invoice.tax/100))}</span>
+                    </div>
+                  )}
+                  {invoice.discount > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-600 font-medium">Discount</span>
+                      <span className="text-red-600 font-medium">-{formatCurrency(invoice.discount)}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="flex justify-between py-4 px-4 bg-gray-100 border-t border-gray-300">
+                  <span className="text-gray-900 font-bold text-lg uppercase tracking-wide">Total Due</span>
+                  <span className="text-blue-700 font-bold text-xl">{formatCurrency(invoice.total)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer Thanks */}
+            <div className="text-center border-t border-gray-200 pt-6 mt-16">
+              <p className="text-sm font-medium text-gray-400">Thank you for your business.</p>
+            </div>
+            
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- SETTINGS VIEW ---
+function SettingsView({ company, setCompany }) {
+  const [formData, setFormData] = useState(company);
+  const [saved, setSaved] = useState(false);
+
+  const handleSave = (e) => {
+    e.preventDefault();
+    setCompany(formData);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 3000);
+  };
+
+  return (
+    <div className="max-w-3xl mx-auto">
+      <h2 className="text-xl font-semibold text-gray-800 mb-6">Company Profile & Branding</h2>
+      <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-8">
+        <form onSubmit={handleSave} className="space-y-6">
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Company Name</label>
+            <input required className="w-full border border-gray-300 p-2.5 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Official Address</label>
+            <textarea rows="3" required placeholder="Street Address&#10;City, State ZIP&#10;United States" className="w-full border border-gray-300 p-2.5 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} />
+          </div>
+
+          <div className="grid grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Billing Email</label>
+              <input type="email" required className="w-full border border-gray-300 p-2.5 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Business Phone</label>
+              <input className="w-full border border-gray-300 p-2.5 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Employer Identification Number (EIN)</label>
+            <input placeholder="XX-XXXXXXX" className="w-full border border-gray-300 p-2.5 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={formData.ein} onChange={e => setFormData({...formData, ein: e.target.value})} />
+          </div>
+
+          <div className="pt-6 mt-6 border-t border-gray-100 flex items-center gap-4">
+            <button type="submit" className="px-6 py-2.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium transition-colors shadow-sm">
+              Save Settings
+            </button>
+            {saved && <span className="text-green-600 text-sm flex items-center gap-1.5 font-medium"><CheckCircle size={18} /> Settings saved successfully</span>}
+          </div>
+
+        </form>
+      </div>
+    </div>
+  );
+}
